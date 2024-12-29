@@ -288,18 +288,68 @@ class DataManager():
 # ------------------------------------ Models ----------------------------------------------------
 
 class LSTM(nn.Module):
-    """
-    An LSTM for sentiment analysis with architecture as described in the exercise description.
-    """
+    class LSTM(nn.Module):
+
+        """
+        An LSTM for sentiment analysis with a bidirectional LSTM architecture.
+        """
 
     def __init__(self, embedding_dim, hidden_dim, n_layers, dropout):
-        return
+        """
+        Initialize the LSTM model.
+        :param embedding_dim: Dimension of the word embeddings
+        :param hidden_dim: Dimension of the LSTM's hidden state
+        :param n_layers: Number of LSTM layers
+        :param dropout: Dropout rate
+        """
+        super(LSTM, self).__init__()
+        self.hidden_dim = hidden_dim
+        self.n_layers = n_layers
+
+        # Define the bidirectional LSTM layer
+        self.lstm = nn.LSTM(
+            input_size=embedding_dim,
+            hidden_size=hidden_dim,
+            num_layers=n_layers,
+            batch_first=True,
+            bidirectional=True,
+            dropout=dropout if n_layers > 1 else 0.0,  # Dropout only if n_layers > 1
+        )
+
+        # Define a linear layer to map concatenated hidden states to a single value
+        self.fc = nn.Linear(hidden_dim * 2, 1)
+
+        # Define the sigmoid activation function
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, text):
-        return
+        """
+        Forward pass of the LSTM model.
+        :param text: Input tensor of shape (batch_size, seq_len, embedding_dim)
+        :return: Output tensor with probabilities (batch_size, 1)
+        """
+        # Pass the input through the LSTM layer
+        lstm_out, (h_n, c_n) = self.lstm(text)
+
+        # Concatenate the last hidden states from both directions
+        last_hidden_state = torch.cat((h_n[-2, :, :], h_n[-1, :, :]), dim=1)
+
+        # Pass through the fully connected layer
+        linear_out = self.fc(last_hidden_state)
+
+        # Apply the sigmoid activation
+        output = self.sigmoid(linear_out)
+
+        return output
 
     def predict(self, text):
-        return
+        """
+        Make a prediction for the input text.
+        :param text: Input tensor of shape (batch_size, seq_len, embedding_dim)
+        :return: Predicted probabilities (batch_size, 1)
+        """
+        with torch.no_grad():
+            return self.forward(text)
 
 
 class LogLinear(nn.Module):
