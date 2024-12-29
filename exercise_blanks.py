@@ -172,7 +172,14 @@ def sentence_to_embedding(sent, word_to_vec, seq_len, embedding_dim=300):
     :param embedding_dim: the dimension of the w2v embedding
     :return: numpy ndarray of shape (seq_len, embedding_dim) with the representation of the sentence
     """
-    return
+    # Initialize the result array with zero vectors
+    embeddings = np.zeros((seq_len, embedding_dim))
+
+    # Map each word in the sentence to its embedding
+    for i, word in enumerate(sent.text[:seq_len]):  # Consider only the first `seq_len` words
+        embeddings[i] = word_to_vec.get(word, np.zeros(embedding_dim))  # Map to embedding or zero vector
+
+    return embeddings
 
 
 class OnlineDataset(Dataset):
