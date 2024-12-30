@@ -1,129 +1,186 @@
-import torch
-from torch.utils.data import DataLoader, Dataset
-from transformers import AutoModelForSequenceClassification, AutoTokenizer
-import matplotlib.pyplot as plt
-from tqdm import tqdm
+import numpy as np
+from matplotlib import pyplot as plt
 
-# Define Dataset Class
-class SentimentDataset(Dataset):
-    def __init__(self, encodings, labels):
-        self.encodings = encodings
-        self.labels = labels
+from data_loader import SentimentTreeBank
 
-    def __getitem__(self, idx):
-        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
-        item['labels'] = torch.tensor(self.labels[idx], dtype=torch.long)
-        return item
+category_dict = {'comp.graphics': 'computer graphics',
+                 'rec.sport.baseball': 'baseball',
+                 'sci.electronics': 'science, electronics',
+                 'talk.politics.guns': 'politics, guns'
+                 }
 
-    def __len__(self):
-        return len(self.labels)
 
-# Training Function
-def train_epoch(model, data_loader, optimizer, device):
-    model.train()
-    total_loss = 0
-    for batch in tqdm(data_loader):
-        inputs = batch['input_ids'].to(device)
-        attention_mask = batch['attention_mask'].to(device)
-        labels = batch['labels'].to(device)
+def get_data(portion=1.):
+    """
+    Get data for given categories and portion
+    :param portion: portion of the data to use
+    :return:
+    """
+    # Initialize dataset
+    dataset = SentimentTreeBank()
 
-        outputs = model(input_ids=inputs, attention_mask=attention_mask, labels=labels)
-        loss = outputs.loss
+    # Get training, validation, and test sets
+    train_set = dataset.get_train_set()
+    validation_set = dataset.get_validation_set()
+    test_set = dataset.get_test_set()
 
-        optimizer.zero_grad()
-        loss.backward()
-        optimizer.step()
+    # Get data
+    train_data = [sent.text for sent in train_set]
+    validation_data = [sent.text for sent in validation_set]
+    test_data = [sent.text for sent in test_set]
 
-        total_loss += loss.item()
-    return total_loss / len(data_loader)
+    train_label = [sent.sentiment_val for sent in train_set]
+    validation_label = [sent.sentiment_val for sent in validation_set]
+    test_label = [sent.sentiment_val for sent in test_set]
 
-# Evaluation Function
-def evaluate_model(model, data_loader, device):
-    model.eval()
-    total, correct = 0, 0
-    with torch.no_grad():
+    # Lengths
+    train_len = int(portion * len(train_set))
+    test_len = int(portion * len(test_set))
+
+    # Train
+    x_train = np.array(train_data[:train_len])
+    y_train = np.array(train_label[:train_len])
+
+    # Remove empty entries
+    non_empty = x_train != ""
+    x_train, y_train = x_train[non_empty].tolist(), y_train[non_empty].tolist()
+
+    # Test
+    x_test = np.array(test_data[:test_len])
+    y_test = np.array(test_label[:test_len])
+
+    # Remove empty entries
+    non_empty = np.array(x_test) != ""
+    x_test, y_test = x_test[non_empty].tolist(), y_test[non_empty].tolist()
+
+    return x_train, y_train, x_test, y_test
+
+
+def transformer_classification(portion=1.):
+    import torch
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    from torch.utils.data import DataLoader
+    import evaluate
+    from tqdm import tqdm
+
+    class Dataset(torch.utils.data.Dataset):
+        """
+        Dataset for loading data
+        """
+
+        def __init__(self, encodings, labels):
+            self.encodings = encodings
+            self.labels = labels
+
+        def __getitem__(self, idx):
+            item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+            item['labels'] = torch.tensor(self.labels[idx], dtype=torch.long)
+            return item
+
+        def __len__(self):
+            return len(self.labels)
+
+    def train_epoch(model, data_loader, optimizer, dev='cpu'):
+        """
+        Perform an epoch of training of the model with the optimizer
+        :param model:
+        :param data_loader:
+        :param optimizer:
+        :param dev:
+        :return: Average loss over the epoch
+        """
+        model.train()
+        total_loss = 0.
+        # iterate over batches
         for batch in tqdm(data_loader):
-            inputs = batch['input_ids'].to(device)
-            attention_mask = batch['attention_mask'].to(device)
-            labels = batch['labels'].to(device)
+            input_ids = batch['input_ids'].to(dev)
+            attention_mask = batch['attention_mask'].to(dev)
+            labels = batch['labels'].to(dev)
 
-            outputs = model(input_ids=inputs, attention_mask=attention_mask)
-            predictions = torch.argmax(outputs.logits, dim=1)
+            outputs = model(input_ids=input_ids, attention_mask=attention_mask, labels=labels)
+            loss = outputs.loss
 
-            total += labels.size(0)
-            correct += (predictions == labels).sum().item()
-    return correct / total
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
 
-# Main Function
-def train_transformer(x_train, y_train, x_test, y_test, learning_rate, weight_decay, batch_size, epochs):
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            total_loss += loss.item()
+        return total_loss / len(data_loader)
 
-    # Initialize the model, tokenizer, and optimizer
-    model = AutoModelForSequenceClassification.from_pretrained("distilroberta-base", num_labels=2).to(device)
-    tokenizer = AutoTokenizer.from_pretrained("distilroberta-base")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+    def evaluate_model(model, data_loader, dev='cpu', metric=None):
+        model.eval()
+        total = 0
+        correct = 0
+        with torch.no_grad():
+            for batch in tqdm(data_loader):
+                input_ids = batch['input_ids'].to(dev)
+                attention_mask = batch['attention_mask'].to(dev)
+                labels = batch['labels'].to(dev)
 
-    # Tokenize the data
-    train_encodings = tokenizer(x_train, truncation=True, padding=True, max_length=512)
-    test_encodings = tokenizer(x_test, truncation=True, padding=True, max_length=512)
+                outputs = model(input_ids=input_ids, attention_mask=attention_mask)
+                logits = outputs.logits
+                predictions = torch.argmax(logits, dim=1)
 
-    # Create DataLoaders
-    train_dataset = SentimentDataset(train_encodings, y_train)
-    test_dataset = SentimentDataset(test_encodings, y_test)
+                total += labels.size(0)
+                correct += (predictions == labels).sum().item()
+        return correct / total
+
+    x_train, y_train, x_test, y_test = get_data(portion=portion)
+
+    # Parameters
+    dev = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    num_labels = len(category_dict)
+    epochs = 2
+    batch_size = 64
+    learning_rate = 1e-5
+
+    # Model, tokenizer, and metric
+    model = AutoModelForSequenceClassification.from_pretrained('distilroberta-base', num_labels=num_labels).to(dev)
+    tokenizer = AutoTokenizer.from_pretrained('distilroberta-base')
+    metric = evaluate.load("accuracy")
+
+    # Datasets and DataLoaders
+    train_dataset = Dataset(tokenizer(x_train, truncation=True, padding=True), y_train)
+    val_dataset = Dataset(tokenizer(x_test, truncation=True, padding=True), y_test)
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size)
 
-    train_losses, val_accuracies = [], []
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
+
+    # Training and evaluation
+    train_losses = []
+    val_accuracies = []
 
     for epoch in range(epochs):
         print(f"Epoch {epoch + 1}/{epochs}")
-        train_loss = train_epoch(model, train_loader, optimizer, device)
-        val_accuracy = evaluate_model(model, test_loader, device)
+        train_loss = train_epoch(model, train_loader, optimizer, dev)
+        val_accuracy = evaluate_model(model, val_loader, dev)
 
         train_losses.append(train_loss)
         val_accuracies.append(val_accuracy)
 
-        print(f"Train Loss: {train_loss:.4f}, Validation Accuracy: {val_accuracy:.4f}")
+        print(f"Train Loss: {train_loss:.4f}")
+        print(f"Validation Accuracy: {val_accuracy:.4f}")
 
-    # Plot Training Results
-    plt.figure(figsize=(12, 5))
+    plt.figure(figsize=(10, 5))
+
     plt.subplot(1, 2, 1)
     plt.plot(range(1, epochs + 1), train_losses, label='Train Loss')
-    plt.xlabel('Epochs')
+    plt.xlabel('Epoch')
     plt.ylabel('Loss')
-    plt.title('Training Loss')
-    plt.legend()
+    plt.title('Train Loss')
 
     plt.subplot(1, 2, 2)
     plt.plot(range(1, epochs + 1), val_accuracies, label='Validation Accuracy')
-    plt.xlabel('Epochs')
+    plt.xlabel('Epoch')
     plt.ylabel('Accuracy')
     plt.title('Validation Accuracy')
-    plt.legend()
 
     plt.tight_layout()
     plt.show()
 
     return model
 
-if __name__ == "__main__":
-    # Example Data (Replace with actual dataset loading)
-    from sklearn.datasets import fetch_20newsgroups
-    from sklearn.model_selection import train_test_split
-
-    # Load data
-    categories = ["sci.space", "rec.sport.hockey"]
-    data = fetch_20newsgroups(subset="all", categories=categories, remove=("headers", "footers", "quotes"))
-    x_data, y_data = data.data, data.target
-
-    # Split data into train/test sets
-    x_train, x_test, y_train, y_test = train_test_split(x_data, y_data, test_size=0.2, random_state=42)
-
-    # Hyperparameters
-    LEARNING_RATE = 1e-5
-    WEIGHT_DECAY = 0
-    BATCH_SIZE = 50
-    EPOCHS = 2
-
-    # Train Transformer
-    trained_model = train_transformer(x_train, y_train, x_test, y_test, LEARNING_RATE, WEIGHT_DECAY, BATCH_SIZE, EPOCHS)
+if __name__ == '__main__':
+    model = transformer_classification()
+    print("success")
