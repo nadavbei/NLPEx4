@@ -349,3 +349,7 @@ if __name__ == '__main__':
     print(dataset.get_train_set()[0].sentiment_val)
     # get word counts dictionary
     print(list(dataset.get_word_counts().keys())[:10])
+    print(dataset.sentences[0].text)
+
+
+
