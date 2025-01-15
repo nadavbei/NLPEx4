@@ -737,5 +737,5 @@ def lstm_model():
 
 if __name__ == '__main__':
     # log_linear_model(ONEHOT_AVERAGE)
-    log_linear_model(W2V_AVERAGE)
-    # lstm_model()
+    # log_linear_model(W2V_AVERAGE)
+    lstm_model()

@@ -25,9 +25,9 @@ def get_data(portion=1.):
     test_set = dataset.get_test_set()
 
     # Get data
-    train_data = [sent.text for sent in train_set]
-    validation_data = [sent.text for sent in validation_set]
-    test_data = [sent.text for sent in test_set]
+    train_data = [' '.join(sent.text) for sent in train_set]
+    validation_data = [' '.join(sent.text) for sent in validation_set]
+    test_data = [' '.join(sent.text) for sent in test_set]
 
     train_label = [sent.sentiment_val for sent in train_set]
     validation_label = [sent.sentiment_val for sent in validation_set]
